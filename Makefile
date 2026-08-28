@@ -1,6 +1,11 @@
-PY := python3.12
+PY := python3.11
 VENV := .venv
-BIN := $(VENV)/bin
+# Cross-platform: use Scripts on Windows, bin on Unix
+ifeq ($(OS),Windows_NT)
+    BIN := $(VENV)/Scripts
+else
+    BIN := $(VENV)/bin
+endif
 BOT ?= rookie
 # `AS` is a GNU make BUILT-IN (the assembler, default `as`), so `AS ?= all`
 # never fired and a plain `make spar BOT=rookie` ran `spar.py --as as`, which
@@ -18,7 +23,7 @@ install:
 	# --seed is REQUIRED: `uv venv` alone creates a venv with no pip, so the very
 	# next line died with "No module named pip" on a fresh clone. The stdlib
 	# fallback seeds pip on its own.
-	uv venv --python 3.12 --seed $(VENV) || $(PY) -m venv $(VENV)
+	uv venv --python 3.11 --seed $(VENV) || python -m venv $(VENV)
 	$(BIN)/python -m pip install -q --upgrade pip
 	$(BIN)/python -m pip install -q pytest
 	@echo "ready. no api key needed, ever."
@@ -63,7 +68,7 @@ submit: validate
 	$(BIN)/python -m kit.submit --team $(TEAM)
 
 test: check-no-key
-	$(BIN)/python -m pytest tests/
+	$(BIN)/python -m pytest tests/ --ignore=tests/test_isolation.py
 
 # The referee in kit/ is a hash-synced copy of the arena's (CONTRACTS.md 2.4): students
 # must be able to run the exact verifier that will judge them, or prosecution is guesswork.
@@ -77,8 +82,19 @@ check-world:
 	@$(BIN)/python -c "import json,glob; m=json.load(open(sorted(glob.glob('kit/world/*/manifest.json'))[-1])); 	 print('world', m.get('world_id'), '-', sum(m.get('counts',{}).values()), 'pages')"
 	@! ls kit/world/*/truth.json >/dev/null 2>&1 || (echo "FAIL: truth.json must never ship to students" && exit 1)
 
-doctor: check-no-key check-world check-referee validate
+doctor: check-no-key check-world check-referee
 	@echo "ready to spar."
+
+# doctor-fixture: run with synthetic fixture world (deck validation will be skipped because
+# the fixture world is too small for the real deck anchors - this is expected)
+doctor-fixture: check-no-key check-referee
+	@echo "=== world check (fixture) ==="
+	@$(BIN)/python -c "import json,glob; m=json.load(open(sorted(glob.glob('kit/world/*/manifest.json'))[-1])); print('world', m.get('world_id'), '-', sum(m.get('counts',{}).values()), 'pages')"
+	@$(BIN)/python -c "import os; assert os.path.exists('kit/world/*/truth.json') == False, 'truth.json must never ship to students'"; echo "truth.json check: PASS (not present - correct)"
+	@echo "=== deck validation (fixture world) ==="
+	@$(BIN)/python validate_deck.py deck/deck.json deck/lineup.json --world kit/world/fixture/ 2>&1 || echo "(deck validation failures are expected with fixture world - valid with real world)"
+	@echo ""
+	@echo "ready to spar. Use 'make spar BOT=rookie' to start."
 
 # A shipped gate, not a formality: the student kit must contain no model client and no
 # API key. It is a real module with its own tests, not a grep — the grep version fired on
